@@ -21,7 +21,7 @@ import argparse
 import csv
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[3]
 EXCLUDE_COLUMNS = ("qc_exclude", "qc_exclude_reason")
 
 

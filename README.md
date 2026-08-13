@@ -7,18 +7,13 @@ HDF5 file per slide containing `coords` (`N x 2`, level-0 pixel locations) and
 
 ## Preprocessing, concisely
 
-1. Read each slide's objective power and compute the scale to 20x. MPP is used
-   to cross-check it (the code warns above 3% disagreement) and, when objective
-   power is missing, to derive a magnification that is snapped to the nearest
-   standard objective. Each field of view is then resampled: a 40x slide
-   contributes a 512-level-0-pixel field resized to 256 px, while a native 20x
-   slide contributes 256 level-0 pixels.
-
-   Objective power deliberately wins over raw MPP. MahmoodLab's published
-   features record an integer `level0_magnification` and derive
-   `patch_size_level0` from it, so their level-0 field is exactly 256 or 512 px.
-   Honouring a scanner's exact MPP instead shifts the field of view, and UNI2-h
-   is sensitive to that — see the validation numbers below.
+1. Read each slide's level-0 MPP and resample so the extracted patch is a true
+   0.5 um/px: a 512-level-0-pixel field on a 0.25 um/px 40x slide (resized to
+   256 px), 256 px on a 0.50 um/px 20x slide, and ~487 px on a Leica GT450's
+   0.263 um/px "40x". Resampling by measured MPP rather than by objective power
+   keeps the field of view scanner-independent, which is what puts two cohorts
+   on one scale — UNI2-h is sensitive to the field of view, see the validation
+   numbers below. Objective power is recorded for QC but does not set the scale.
 2. At a low-resolution pyramid level, convert the slide to HSV and segment the
    saturation channel using the [CLAM TCGA preset](https://github.com/mahmoodlab/CLAM/blob/master/presets/tcga.csv): threshold 8, median filter 7, morphological close 4, tissue-area filter 16, hole-area filter 4, and at most 8 holes per contour.
 3. Tile segmented tissue without overlap at **20x** using **256 x 256 px** patches
@@ -102,9 +97,11 @@ attributes. Always inspect `01_preprocessed/qc/` before feature extraction.
 
 ## Validation against the published TCGA features
 
-`src/03_fetch_tcga_slides.py` downloads TCGA diagnostic slides from the GDC
+`ebv.validation.fetch_tcga` downloads TCGA diagnostic slides from the GDC
 (open access, no token) whose names match the precomputed feature files;
-`src/04_validate_vs_tcga.py` then runs two independent checks.
+`ebv.validation.validate` then runs the encoder check below. (A one-time tiling
+comparison — `scale-mode=reference` plus a coordinate overlay — is no longer
+shipped; its findings are recorded further down for reference.)
 
 **Encoder check — passes.** Reading patches at *their* coordinates with this
 repo's code and running UNI2-h reproduces their published vectors:
@@ -135,7 +132,10 @@ error. This is why objective power is preferred over raw MPP: every slide in
 disagreement that would have put this cohort's embeddings in a measurably
 different part of UNI2's space from the TCGA reference.
 
-**Tiling check — aligned, but their coordinates are not a complete tiling.**
+**Tiling check (one-time, code removed) — aligned, but their coordinates are not
+a complete tiling.** The findings below were produced by an earlier
+`scale-mode=reference` tiling comparison that is no longer part of the shipped
+code; they are kept as a record of why the release is not a tiling reference.
 After anchoring the grid at the slide origin and snapping magnification, 96-99%
 of their tiles are reproduced exactly, with zero coordinates off the lattice:
 
@@ -167,13 +167,11 @@ This is dropout on a fixed grid, not tissue filtering:
 
 No tissue-content filter operates on an 8-patch raster, so this is a systematic
 extraction or serialization loss on their side, not a preprocessing step to
-reproduce. Across a 120-slide sample, 28.9% of columns are absent. Run `src/04_validate_vs_tcga.py --overlay` to see it:
-`03_validation/overlay_*.jpg` colours every tile green where both pipelines
-agree, red where only this pipeline has a tile, and blue where only the
-reference does, with a legend drawn on the image. On TCGA-BR-8592 the red forms
-clean vertical bands over ordinary tumour tissue — the signature of missing
-columns, not of over-segmentation. The 106 blue tiles are edge tiles where this
-segmentation is slightly tighter than theirs.
+reproduce. Across a 120-slide sample, 28.9% of columns are absent. The overlay
+that showed this (`03_validation/overlay_*.jpg`, green where both pipelines
+agree, red where only this pipeline has a tile, blue where only the reference
+does) coloured clean vertical red bands over ordinary tumour tissue on
+TCGA-BR-8592 — the signature of missing columns, not of over-segmentation.
 
 Treat the release as a trustworthy **encoder** reference and not as a **tiling**
 reference, and do not tune segmentation to match its tile counts.
@@ -190,18 +188,22 @@ pip install openslide-python opencv-python h5py pillow numpy
 On Linux, `openslide-python` also requires the system OpenSlide library (or use
 `openslide-bin` where appropriate for the environment).
 
+The pipeline is a package under `src/ebv`, run with `python -m ebv.<stage>`. Put
+`src` on the path first — `export PYTHONPATH=src` from the repository root (the
+commands below assume it), or `pip install -e .` if you add a packaging file.
+
 First smoke-test one slide:
 
 ```bash
-python src/00_preprocessing.py --limit 1
-python src/01_call_uni.py --limit 1 --batch-size 16
+python -m ebv.preprocessing.run --limit 1
+python -m ebv.embedding.encode --limit 1 --batch-size 16
 ```
 
 Then process the cohort:
 
 ```bash
-python src/00_preprocessing.py
-python src/01_call_uni.py --batch-size 32 --workers 4
+python -m ebv.preprocessing.run
+python -m ebv.embedding.encode --batch-size 32 --workers 4
 ```
 
 Defaults and outputs:
@@ -218,8 +220,8 @@ known scanner setting, for example `--base-magnification 40`.
 To reproduce the validation:
 
 ```bash
-python src/03_fetch_tcga_slides.py --auto 3     # or name slides explicitly
-python src/04_validate_vs_tcga.py --max-patches 64
+python -m ebv.validation.fetch_tcga --auto 3     # or name slides explicitly
+python -m ebv.validation.validate --max-patches 64
 ```
 
 `--auto` picks the smallest precomputed slides, which are the cheapest to
@@ -234,8 +236,8 @@ where each slide sits in its own GDC UUID folder. Every consumer script points
 there. Preprocessing and embedding must be rerun against it:
 
 ```bash
-python src/00_preprocessing.py --input-dir 00_tcga_WSI_raw --output-dir 01_preprocessed_tcga
-python src/01_call_uni.py --input-dir 00_tcga_WSI_raw \
+python -m ebv.preprocessing.run --input-dir 00_tcga_WSI_raw --output-dir 01_preprocessed_tcga
+python -m ebv.embedding.encode --input-dir 00_tcga_WSI_raw \
     --coords-dir 01_preprocessed_tcga/patches \
     --output-dir 02_uni2_embeddings_tcga --batch-size 32 --workers 8
 ```
@@ -244,24 +246,27 @@ Shard the encoder across GPUs with `--shard-count 2 --shard-index 0|1`.
 
 ### MIL + MLP classifier
 
-`src/mil_model.py` holds the gated-attention MIL (Ilse et al. 2018) with a
-masked softmax for variable bag sizes and an MLP head on the pooled bag
-embedding. `src/07_train_mil.py` trains it; `src/08_attention_heatmaps.py` turns
-the saved attention into patch-importance tables and heatmaps.
+`ebv.mil.models` holds the gated-attention MIL (Ilse et al. 2018, with a masked
+softmax for variable bag sizes and an MLP head on the pooled bag embedding) and
+Additive MIL, registered by name so a new architecture is one decorated
+`nn.Module`. `ebv.mil.train` trains via a small `Trainer`;
+`ebv.mil.heatmaps` turns the saved attention into patch-importance tables and
+heatmaps. Add `--arch additive` to train the additive variant, which also writes
+signed per-patch contributions.
 
 ```bash
 # Chile only (runnable now)
-python src/07_train_mil.py --cohort chile --run-name chile_5fold
+python -m ebv.mil.train --cohort chile --run-name chile_5fold
 
 # Pooled, once the TCGA embeddings exist
-python src/07_train_mil.py --features-dir 02_uni2_embeddings 02_uni2_embeddings_tcga \
+python -m ebv.mil.train --features-dir 02_uni2_embeddings 02_uni2_embeddings_tcga \
     --cohort chile tcga --run-name pooled_5fold
 
 # Train on Chile, hold TCGA out entirely as an external cohort
-python src/07_train_mil.py --features-dir 02_uni2_embeddings 02_uni2_embeddings_tcga \
+python -m ebv.mil.train --features-dir 02_uni2_embeddings 02_uni2_embeddings_tcga \
     --cohort chile --external-cohort tcga --run-name chile_train_tcga_ext
 
-python src/08_attention_heatmaps.py --run-dir 04_mil/pooled_5fold --overlay
+python -m ebv.mil.heatmaps --run-dir 04_mil/pooled_5fold --overlay
 ```
 
 Cross-validation is grouped by `patient_id` and stratified on the EBV label, so
@@ -300,6 +305,7 @@ them run from the repository root inside the `UNI` conda environment:
 ```bash
 cd /mnt/ix1/Projects_lite/kchen24/EBV_prediction
 conda activate UNI    # /home/kchen24/.conda/envs/UNI, torch 2.13.0+cu130, 2x RTX 3090
+export PYTHONPATH=src # the pipeline is the ebv package under src/
 ```
 
 Both stages skip existing outputs, so a re-run resumes unless `--overwrite` is
@@ -314,11 +320,11 @@ Input is `00_new_HE`, a symlink to
 
 ```bash
 # 1. Segment + tile -> 01_preprocessed/{patches,qc}/ + manifest.csv
-python src/00_preprocessing.py
+python -m ebv.preprocessing.run
 
 # 2. UNI2-h embeddings -> 02_uni2_embeddings/*.h5, one shard per GPU
-CUDA_VISIBLE_DEVICES=0 python src/01_call_uni.py --shard-count 2 --shard-index 0
-CUDA_VISIBLE_DEVICES=1 python src/01_call_uni.py --shard-count 2 --shard-index 1
+CUDA_VISIBLE_DEVICES=0 python -m ebv.embedding.encode --shard-count 2 --shard-index 0
+CUDA_VISIBLE_DEVICES=1 python -m ebv.embedding.encode --shard-count 2 --shard-index 1
 ```
 
 Both stages ran entirely on defaults — no flag that changes the output was
@@ -338,7 +344,7 @@ slide sits in its own GDC UUID folder.
 rm -rf 01_preprocessed_tcga/patches 01_preprocessed_tcga/qc 01_preprocessed_tcga/manifest.csv
 
 # 1. Segment + tile -> 01_preprocessed_tcga/{patches,qc}/ + manifest.csv
-python src/00_preprocessing.py \
+python -m ebv.preprocessing.run \
     --input-dir 00_tcga_WSI_raw \
     --output-dir 01_preprocessed_tcga \
     --jobs 32 --overwrite \
@@ -346,7 +352,7 @@ python src/00_preprocessing.py \
 
 # 2. UNI2-h embeddings -> 02_uni2_embeddings_tcga/*.h5, one shard per GPU
 for i in 0 1; do
-  CUDA_VISIBLE_DEVICES=$i setsid nohup python src/01_call_uni.py \
+  CUDA_VISIBLE_DEVICES=$i setsid nohup python -m ebv.embedding.encode \
       --input-dir 00_tcga_WSI_raw \
       --coords-dir 01_preprocessed_tcga/patches \
       --output-dir 02_uni2_embeddings_tcga \
@@ -365,9 +371,9 @@ the 399 surviving slides, sharded 200 + 199 for 4,949,226 patches
 
 The shards are detached with `setsid nohup` deliberately: the run takes hours
 and must not die with the shell that launched it. Watch it with
-`tail -f 02_uni2_tcga_shard0.log`, and note that `pkill -f 01_call_uni.py` will
-also match the launching shell's own command line — match on `src/01_call_uni`
-and check `pgrep -af` first.
+`tail -f 02_uni2_tcga_shard0.log`, and note that `pkill -f ebv.embedding.encode`
+will also match the launching shell's own command line — match on
+`ebv.embedding.encode` and check `pgrep -af` first.
 
 ### Scale convention actually used
 
@@ -380,20 +386,19 @@ resamples by each slide's measured MPP to a true 0.5 um/px patch:
 | TCGA (e.g. TCGA-3M-AB46) | 0.2527 | 40x | 1.9786 | 0.500 um/px |
 
 This is self-consistent across the two cohorts, which is what the pooled MIL
-model needs. It is **not** the published-TCGA-feature convention: reproducing
-that requires `--scale-mode reference`, which derives the scale from objective
-power and would give an exact `target_downsample` of 2.0 on a 40x slide. The
-validation section above measures that difference — on TCGA-MX-A5UG a 4.8%
-field-of-view error moves cosine agreement with the published features from
-0.99996 to ~0.95. So treat these embeddings as internally comparable to each
-other, and not as drop-in replacements for the MahmoodLab release.
+model needs. It is **not** the published-TCGA-feature convention, which derives
+the scale from objective power and gives an exact `target_downsample` of 2.0 on
+a 40x slide (the removed `scale-mode=reference` did this). The validation
+section above measures that difference — on TCGA-MX-A5UG a 4.8% field-of-view
+error moves cosine agreement with the published features from 0.99996 to ~0.95.
+So treat these embeddings as internally comparable to each other, and not as
+drop-in replacements for the MahmoodLab release.
 
 ### Reproducing the validation artifacts
 
 ```bash
-python src/03_fetch_tcga_slides.py --auto 3
-python src/04_validate_vs_tcga.py --max-patches 64 --overlay
+python -m ebv.validation.fetch_tcga --auto 3
+python -m ebv.validation.validate --max-patches 64
 ```
 
-Outputs land in `03_validation/` (`tcga_validation.json`, `uni_benchmark.json`,
-`overlay_*.jpg`).
+Outputs land in `03_validation/tcga_validation.json`.

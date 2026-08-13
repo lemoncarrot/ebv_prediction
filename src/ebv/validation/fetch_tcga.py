@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FEATURE_DIR = ROOT / "TCGA_STAD_precomputed_features" / "TCGA"
 DEFAULT_OUTPUT = ROOT / "00_tcga_WSI_raw"
 GDC_FILES = "https://api.gdc.cancer.gov/files"

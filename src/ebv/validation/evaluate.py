@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Confusion matrices, threshold sweeps, and bootstrap CIs for a 07_train_mil.py run.
+"""Confusion matrices, threshold sweeps, and bootstrap CIs for an ebv.mil.train run.
 
 `metrics.json` reports rates (sensitivity, specificity, AUPRC). This turns them
 back into counts, puts AUPRC next to the only baseline that makes it readable,
@@ -15,7 +15,7 @@ Two things this is built to make visible:
     not have this problem, which is why the two metrics disagree so often on
     imbalanced cohorts.
 
-*   **A threshold does not transfer across cohorts for free.** `07_train_mil.py`
+*   **A threshold does not transfer across cohorts for free.** `ebv.mil.train`
     picks the Youden point on held-out training-cohort data and reuses it for
     `--external-cohort`. If the two cohorts differ in prevalence or calibration,
     that point lands in the wrong place and sensitivity collapses even when the
@@ -25,8 +25,8 @@ Two things this is built to make visible:
 
 Usage:
 
-    python src/09_evaluate_mil.py --run-dir 04_mil/tcga_train_chile_ext
-    python src/09_evaluate_mil.py --run-dir 04_mil/pooled_5fold --by-cohort
+    python -m ebv.validation.evaluate --run-dir 04_mil/tcga_train_chile_ext
+    python -m ebv.validation.evaluate --run-dir 04_mil/pooled_5fold --by-cohort
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
         description=__doc__.splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--run-dir", type=Path, required=True,
-                        help="A run directory from 07_train_mil.py.")
+                        help="A run directory from ebv.mil.train.")
     parser.add_argument("--bootstrap", type=int, default=2000,
                         help="Bootstrap resamples for the CIs (0 disables).")
     parser.add_argument("--seed", type=int, default=0)
@@ -185,11 +185,10 @@ def main() -> int:
         return 2
     metrics = json.loads(metrics_path.read_text())
     config = json.loads((run_dir / "config.json").read_text())
-    single = config.get("mode") == "single_split"
-    threshold = float(metrics["threshold"] if single else metrics["oof"]["slide"]["threshold"])
+    threshold = float(metrics["oof"]["slide"]["threshold"])
 
-    design = "single split (no CV)" if single else f"{metrics.get('n_folds')}-fold CV"
-    print(f"run: {run_dir.name}    arch: {config.get('arch', 'gated_attention')}    {design}")
+    print(f"run: {run_dir.name}    arch: {config.get('arch', 'gated_attention')}    "
+          f"{metrics.get('n_folds')}-fold CV")
     print(f"trained on: {config.get('cohort') or 'all'}"
           f"    external: {config.get('external_cohort') or 'none'}"
           f"    balance: {config.get('balance', 'none')}"
@@ -197,15 +196,12 @@ def main() -> int:
 
     summary: dict[str, object] = {"run": run_dir.name, "threshold": threshold}
 
-    # Single-split runs have a validation split where CV runs have out-of-fold
-    # predictions. Neither is a test set; both are where the threshold came from.
-    internal_path = run_dir / ("val_predictions.csv" if single else "oof_predictions.csv")
-    internal_name = ("VALIDATION SPLIT (threshold chosen here, not a test set)" if single
-                     else "OUT-OF-FOLD (cross-validated on the training cohort)")
-    internal = pd.read_csv(internal_path)
+    # Out-of-fold predictions are where the threshold came from, not a test set.
+    internal_name = "OUT-OF-FOLD (cross-validated on the training cohort)"
+    internal = pd.read_csv(run_dir / "oof_predictions.csv")
     labels, scores = internal["label"].to_numpy(), internal["prob"].to_numpy()
     summary["internal"] = matrix_block(internal_name, labels, scores, threshold, args)
-    sweep("validation" if single else "out-of-fold", labels, scores, threshold, args.sweep)
+    sweep("out-of-fold", labels, scores, threshold, args.sweep)
 
     if args.by_cohort and internal["cohort"].nunique() > 1:
         for cohort, group in internal.groupby("cohort"):

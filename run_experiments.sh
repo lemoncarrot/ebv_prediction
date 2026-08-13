@@ -7,7 +7,7 @@
 #   bash run_experiments.sh --dry-run    # resolve cohorts and exit, no training
 #
 # Every run reads metadata/cohort_labels.csv, which now carries qc_exclude=1 on
-# the 35 pen-contaminated TCGA slides (pen_review r000-r034). 07_train_mil.py
+# the 35 pen-contaminated TCGA slides (pen_review r000-r034). ebv.mil.train
 # drops them automatically; add --ignore-qc-exclude to a run to override.
 #
 # Expected cohorts after exclusion:
@@ -39,7 +39,7 @@ run() {
     # run <gpu> <run-name> <args...>
     local gpu="$1" name="$2"; shift 2
     echo "[gpu $gpu] === $name START $(date '+%F %T') ==="
-    CUDA_VISIBLE_DEVICES="$gpu" python src/07_train_mil.py \
+    CUDA_VISIBLE_DEVICES="$gpu" PYTHONPATH=src python -m ebv.mil.train \
         --run-name "$name" "${COMMON[@]}" ${DRY:+$DRY} "$@" \
         > "$LOGS/${name}.log" 2>&1
     local rc=$?
@@ -54,7 +54,7 @@ run() {
 # GPU 0: the two cross-cohort transfer runs, then combined.
 #
 # tcga_to_chile vs tcga_to_chile_weighted is the requested weighting contrast.
-# 07_train_mil.py defaults --pos-weight to neg/pos (auto), so the *unweighted*
+# ebv.mil.train defaults --pos-weight to neg/pos (auto), so the *unweighted*
 # arm is the one needing an explicit flag: --pos-weight 1.0.
 queue_gpu0() {
     run 0 tcga_to_chile \
@@ -159,7 +159,7 @@ for d in "$CHILE_FEATURES" "$TCGA_FEATURES"; do
 done
 if ! head -1 metadata/cohort_labels.csv | grep -q "qc_exclude"; then
     echo "ERROR: metadata/cohort_labels.csv has no qc_exclude column." >&2
-    echo "       Run: python src/11_annotate_qc_exclusions.py" >&2
+    echo "       Run: PYTHONPATH=src python -m ebv.metadata.annotate_qc" >&2
     exit 1
 fi
 if ! python -c "import torch, h5py, pandas, sklearn" 2>/dev/null; then
@@ -208,7 +208,7 @@ Watch progress:
   tail -f $LOGS/tcga_5fold.log
 
 Check what is still running:
-  pgrep -af 'src/07_train_mil'
+  pgrep -af 'ebv.mil.train'
 
 Collect results when finished:
   bash run_experiments.sh --summary

@@ -28,7 +28,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CHILE = ROOT / "metadata" / "ebv_status.csv"
 DEFAULT_TCGA_TABLE = ROOT / "metadata" / "STAD_merged_table.csv"
 DEFAULT_TCGA_SLIDES = ROOT / "00_tcga_WSI_raw"

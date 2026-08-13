@@ -17,7 +17,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_WORKBOOK = ROOT / "00_new_HE" / "Chile set_Training_n_132.xlsx"
 DEFAULT_PATCH_DIR = ROOT / "01_preprocessed" / "patches"
 DEFAULT_OUTPUT = ROOT / "metadata" / "ebv_status.csv"
