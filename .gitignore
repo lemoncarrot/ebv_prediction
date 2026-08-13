@@ -216,3 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project data: slides, derived features, validation artifacts (all large)
+00_new_HE
+00_tcga_WSI_raw/
+01_preprocessed_tcga/
+02_uni2_embeddings_tcga/
+04_mil/
+05_attention_maps/
+anish_attention_results/
+01_preprocessed/
+02_uni2_embeddings/
+03_validation/
+TCGA_STAD_precomputed_features/
+03_qc_pen_review/

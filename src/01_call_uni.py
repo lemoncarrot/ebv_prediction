@@ -30,13 +30,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default=None)
     parser.add_argument("--amp", choices=("none", "float16", "bfloat16"), default="float16")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--shard-count", type=int, default=1,
+        help="Split the slide list across this many independent processes (one GPU each).",
+    )
+    parser.add_argument("--shard-index", type=int, default=0, help="Which shard this process runs.")
     args = parser.parse_args()
     if args.batch_size <= 0 or args.workers < 0:
         parser.error("--batch-size must be positive and --workers must be non-negative")
+    if args.shard_count < 1 or not 0 <= args.shard_index < args.shard_count:
+        parser.error("--shard-index must be in [0, --shard-count)")
+    if args.device is None:
+        args.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if args.device == "cpu":
+            print(
+                "WARNING: no CUDA device visible to torch, falling back to CPU (orders of "
+                "magnitude slower).\n"
+                "         Check `nvidia-smi` and `torch.cuda.is_available()`; pass "
+                "--device cpu to silence this.",
+                file=sys.stderr,
+                flush=True,
+            )
+    elif args.device.startswith("cuda") and not torch.cuda.is_available():
+        parser.error(f"--device {args.device} requested but torch reports no CUDA device")
     if not str(args.device).startswith("cuda") and args.amp == "float16":
         args.amp = "none"
     return args
@@ -80,6 +100,30 @@ class WSIPatchDataset(Dataset):
     def __del__(self) -> None:
         if self._slide is not None:
             self._slide.close()
+
+
+def shard(coord_files: list[Path], count: int, index: int) -> list[Path]:
+    """Split slides across shards by patch count, not by position.
+
+    Slides differ by two orders of magnitude in patch count, so round-robin would
+    leave one GPU idle for hours. Greedy longest-processing-time first: hand the
+    largest remaining slide to whichever shard has the least work queued.
+    """
+    if count == 1:
+        return coord_files
+    sizes = []
+    for path in coord_files:
+        with h5py.File(path, "r") as handle:
+            sizes.append((handle["coords"].shape[0], path))
+    loads = [0] * count
+    buckets: list[list[Path]] = [[] for _ in range(count)]
+    for patches, path in sorted(sizes, key=lambda item: -item[0]):
+        target = min(range(count), key=lambda i: loads[i])
+        loads[target] += patches
+        buckets[target].append(path)
+    print(f"shard {index}/{count}: {len(buckets[index])} slides, {loads[index]:,} patches "
+          f"(shard loads: {', '.join(f'{n:,}' for n in loads)})", flush=True)
+    return sorted(buckets[index])
 
 
 def find_slides(input_dir: Path) -> dict[str, Path]:
@@ -173,6 +217,7 @@ def main() -> int:
     if not coord_files:
         print(f"ERROR: no coordinate HDF5 files found in {coords_dir}", file=sys.stderr)
         return 2
+    coord_files = shard(coord_files, args.shard_count, args.shard_index)
 
     try:
         slides = find_slides(input_dir)
@@ -211,11 +256,12 @@ def main() -> int:
             rows.append({"slide": coord_path.stem, "status": "failed", "patches": "", "message": str(exc)})
             traceback.print_exc()
 
-    with (output_dir / "manifest.csv").open("w", newline="") as stream:
+    name = "manifest.csv" if args.shard_count == 1 else f"manifest_shard{args.shard_index}.csv"
+    with (output_dir / name).open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=["slide", "status", "patches", "message"])
         writer.writeheader()
         writer.writerows(rows)
-    print(f"Finished {len(coord_files)} slides ({failures} failed). Manifest: {output_dir / 'manifest.csv'}")
+    print(f"Finished {len(coord_files)} slides ({failures} failed). Manifest: {output_dir / name}")
     return 1 if failures else 0
 
 
