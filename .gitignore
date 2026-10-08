@@ -230,3 +230,14 @@ anish_attention_results/
 03_validation/
 TCGA_STAD_precomputed_features/
 03_qc_pen_review/
+
+# Current layout (Sherlock): data, outputs and logs never go in git
+/data/
+/results/
+/logs/
+nohup.out
+*.svs
+*.bif
+*.h5
+*.pt
+*.geojson
