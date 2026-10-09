@@ -33,8 +33,21 @@ class SlideReader:
         self.path = str(path)
         self.mpp_target = mpp_target
         self.tile_size = int(tile_size)
-        self._slide = openslide.OpenSlide(self.path)
+        self._slide, self.backend = self._open(self.path)
         self.geometry = self._resolve_geometry()
+
+    @staticmethod
+    def _open(path: str):
+        """OpenSlide, or for Ventana .bif it cannot open (DP 200/600 LEFT tile
+        joints) the tifffile reader in bif_reader.py, which ignores joint overlaps."""
+        try:
+            return openslide.OpenSlide(path), "openslide"
+        except openslide.OpenSlideError:
+            if not path.lower().endswith(".bif"):
+                raise
+            from bif_reader import BifSlide
+            slide = BifSlide(path)
+            return slide, BifSlide.backend
         
     def _resolve_mpp(self) -> tuple[float, str]:
         # first gets MPP, if not available, fall back to objective power (maps to MPP roughly)

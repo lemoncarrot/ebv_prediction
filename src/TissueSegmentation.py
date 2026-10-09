@@ -19,6 +19,7 @@ def segment_tissue(
     min_tissue_um2: float = 4e6,
     min_hole_um2: float = 1e6,
     max_holes_per_contour: int = 8,
+    max_dark_value: int | None = None,
     ) -> np.ndarray:
     # like-CLAM tissue segmentation (on lower resolution thumbnail)
     
@@ -36,7 +37,12 @@ def segment_tissue(
         _, binary = cv2.threshold(sat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     else:
         _, binary = cv2.threshold(sat, sat_thresh, 255, cv2.THRESH_BINARY)
-    
+
+    if max_dark_value is not None:
+        # near-black pixels (scanner edges, slide borders) are never tissue
+        dark = cv2.medianBlur(hsv[..., 2], median_blur) <= max_dark_value
+        binary[dark] = 0
+
     # close pinholes (one piece of tissue stays connected)
     kernel = np.ones((close_kernel, close_kernel), np.uint8)
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)

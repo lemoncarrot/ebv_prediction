@@ -12,6 +12,8 @@ Writes <run-dir>/attention.h5, one group per slide:
     attention   (n,)   float32 softmax attention, sums to 1 over the slide
     tile_logit  (n,)   float32 EBV log-odds of the bag head applied to each tile alone -- an
                                approximate per-tile EBV score (sign = direction)
+    contribution (n, K) float32 additive models only: a_i * g(h_i), the exact per-tile
+                               contribution to each class logit (sums to the slide logits)
     attrs: label, prob, cohort, split, plus every attr of the embedding .h5
            (slide_path, patch_size_level0, mpp_base, ...) needed to draw it.
 
@@ -48,9 +50,11 @@ def write_attention(model: ABMIL, rows: pd.DataFrame, out_path: Path, device: st
         for i in range(len(dataset)):
             features, label, slide_id = dataset[i]
             x = features.to(device)
-            attention, h = model.attend(x)
-            prob = torch.sigmoid(logodds(model.head(attention @ h), EBV_INDEX)).item()
-            tile_logit = logodds(model.head(h), EBV_INDEX)   # EBV vs rest, any head
+            logits, attention = model(x)                     # either aggregation mode
+            prob = torch.sigmoid(logodds(logits, EBV_INDEX)).item()
+            _, h = model.attend(x)
+            tile_logits = model.head(h)                      # (n, n_classes)
+            tile_logit = logodds(tile_logits, EBV_INDEX)     # EBV vs rest, any head
 
             source = Path(rows["feature_path"].iloc[i])
             with h5py.File(source, "r") as emb:
@@ -61,6 +65,10 @@ def write_attention(model: ABMIL, rows: pd.DataFrame, out_path: Path, device: st
             group.create_dataset("coords", data=coords, compression="gzip")
             group.create_dataset("attention", data=attention.cpu().numpy().astype(np.float32))
             group.create_dataset("tile_logit", data=tile_logit.cpu().numpy().astype(np.float32))
+            if getattr(model, "aggregation", "attention") == "additive":
+                # exact: summing over tiles gives the slide's logits
+                contribution = (attention[:, None] * tile_logits).cpu().numpy()
+                group.create_dataset("contribution", data=contribution.astype(np.float32))
             group.attrs.update({k: v for k, v in read_attrs(source).items() if v is not None})
             group.attrs.update({"label": int(label.item()), "prob": float(prob),
                                 "cohort": str(rows["cohort"].iloc[i]),

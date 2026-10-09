@@ -1,6 +1,7 @@
 """Attention-based deep MIL (Ilse et al. 2018), one bag at a time.
 
-    p(y) = psi( sum_i a_i * h_i )      h_i = f(x_i),  a = softmax over tiles
+    attention:  p(y) = psi( sum_i a_i * h_i )      h_i = f(x_i),  a = softmax over tiles
+    additive:   p(y) = sum_i a_i * psi( h_i )      (Javed et al. 2022; exact tile contributions)
 
 The module owns the aggregation: attention pooling lives inside `forward`, so a
 bag of any length goes in and one logit comes out. It knows nothing about
@@ -44,10 +45,14 @@ class ABMIL(nn.Module):
         head_hidden: int | None = 256,
         n_classes: int = 1,
         dropout: float = 0.25,
+        aggregation: str = "attention",
     ) -> None:
         super().__init__()
         self.input_dim, self.hidden_dim, self.attn_dim = input_dim, hidden_dim, attn_dim
         self.head_hidden, self.n_classes, self.dropout = head_hidden, n_classes, dropout
+        if aggregation not in ("attention", "additive"):
+            raise ValueError(f"aggregation must be attention or additive, got {aggregation!r}")
+        self.aggregation = aggregation
 
         # per-tile projection
         self.encoder = nn.Sequential(
@@ -96,6 +101,11 @@ class ABMIL(nn.Module):
             raise ValueError("empty bag: filter these out with min_tiles in build_cohort")
 
         attention, h = self.attend(x)
+        if self.aggregation == "additive":
+            # Additive MIL (Javed et al. 2022), weighted on the scores: classify
+            # every tile, then take the attention-weighted sum of tile logits.
+            # Bounded (weights sum to 1); contributions a_i * g(h_i) are exact.
+            return attention @ self.head(h), attention
         bag = attention @ h              # (h,) -- the aggregation step
         return self.head(bag), attention
 
@@ -103,7 +113,8 @@ class ABMIL(nn.Module):
         """Enough to rebuild this model from a checkpoint."""
         return {"input_dim": self.input_dim, "hidden_dim": self.hidden_dim,
                 "attn_dim": self.attn_dim, "head_hidden": self.head_hidden,
-                "n_classes": self.n_classes, "dropout": self.dropout}
+                "n_classes": self.n_classes, "dropout": self.dropout,
+                "aggregation": self.aggregation}
 
     @classmethod
     def from_config(cls, config: dict) -> "ABMIL":

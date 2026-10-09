@@ -67,6 +67,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--attn-dim", type=int, default=256)
     p.add_argument("--head-hidden", type=int, default=256)
     p.add_argument("--dropout", type=float, default=0.25)
+    p.add_argument("--aggregation", choices=("attention", "additive"), default="attention",
+                   help="attention: classify the attention-pooled bag (ABMIL). additive: "
+                        "attention-weighted sum of per-tile logits (Additive MIL).")
     p.add_argument("--feature-norm", choices=("none", "l2"), default="none")
     p.add_argument("--max-tiles", type=int, default=None,
                    help="Subsample bags larger than this each epoch.")
@@ -227,7 +230,8 @@ def bags(rows: pd.DataFrame, args, max_tiles: int | None) -> BagDataset:
 def new_model(embed_dim: int, args) -> ABMIL:
     return ABMIL(input_dim=embed_dim, hidden_dim=args.hidden_dim, attn_dim=args.attn_dim,
                  head_hidden=args.head_hidden, dropout=args.dropout,
-                 n_classes=len(CLASSES) if args.label_scheme == "3class" else 1)
+                 n_classes=len(CLASSES) if args.label_scheme == "3class" else 1,
+                 aggregation=args.aggregation)
 
 
 def score(model: ABMIL, rows: pd.DataFrame, args) -> pd.DataFrame:

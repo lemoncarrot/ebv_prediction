@@ -42,15 +42,14 @@ EXPERIMENTS = [
      "runs": ["mixed_45065873"]},
     {"key": "03_tcga_to_chile_3class",
      "pattern": "tcga2chile_3class_s{seed}_*"},
-    {"key": "04_tcga_to_chile_3class_msiw",
-     "pattern": "tcga2chile_3class_msiw3_s{seed}_*"},
+    {"key": "04_tcga_to_chile_3class_additive",
+     "pattern": "tcga2chile_3class_additive_s{seed}_*"},
 ]
-# summary rows, top to bottom; the weighted-binary run is shown as a reference
+# summary rows, top to bottom: the TCGA -> Chile variants in the order presented
 SUMMARY_ARMS = [
-    ("binary", "Binary (baseline)", "tcga2chile_binary_s{seed}_*"),
-    ("msiw3", "Binary + MSI weight ×3", "tcga2chile_msiw3_s{seed}_*"),
-    ("3class", "3-class", "tcga2chile_3class_s{seed}_*"),
-    ("3class_msiw3", "3-class + MSI weight ×3", "tcga2chile_3class_msiw3_s{seed}_*"),
+    ("binary", "Binary ABMIL (baseline)", "tcga2chile_binary_s{seed}_*"),
+    ("3class", "3-class ABMIL", "tcga2chile_3class_s{seed}_*"),
+    ("3class_additive", "3-class additive MIL", "tcga2chile_3class_additive_s{seed}_*"),
 ]
 
 

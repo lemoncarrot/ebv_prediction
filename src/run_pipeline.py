@@ -31,7 +31,7 @@ from SlideReaderClass import SlideReader
 from TissueSegmentation import segment_slide
 from encoders.UNI import UNIEncoder
 
-SLIDE_SUFFIXES = (".svs", ".ndpi", ".tif", ".tiff", ".mrxs")
+SLIDE_SUFFIXES = (".svs", ".ndpi", ".tif", ".tiff", ".mrxs", ".bif")
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-tissue", type=float, default=0.10,
                    help="Minimum masked fraction for a tile to be kept.")
     p.add_argument("--max-dim", type=int, default=4096, help="Thumbnail size used for segmentation.")
+    p.add_argument("--min-tissue-area", type=float, default=None,
+                   help="Smallest tissue piece kept, um^2 (segmentation default 4e6 = 4 mm^2).")
+    p.add_argument("--max-dark-value", type=int, default=None,
+                   help="Exclude near-black pixels (HSV value <= this) from tissue, e.g. 60.")
     p.add_argument("--sat-thresh", type=int, default=None,
                    help="Saturation threshold; Otsu is used when unset.")
     p.add_argument("--overwrite", action="store_true")
@@ -108,7 +112,9 @@ def embed_slide(slide_path: Path, out_path: Path, encoder: UNIEncoder, args) -> 
     spec = encoder.spec
     slide_id = slide_path.stem
 
-    seg_params = {} if args.sat_thresh is None else {"sat_thresh": args.sat_thresh}
+    seg_params = {k: v for k, v in (("sat_thresh", args.sat_thresh),
+                                    ("min_tissue_um2", args.min_tissue_area),
+                                    ("max_dark_value", args.max_dark_value)) if v is not None}
     qc_path = None if args.no_qc else args.qc_dir / f"{slide_id}.png"
 
     with SlideReader(slide_path, mpp_target=spec.mpp_target, tile_size=spec.tile_size) as reader:
@@ -125,6 +131,8 @@ def embed_slide(slide_path: Path, out_path: Path, encoder: UNIEncoder, args) -> 
         attrs = {
             "slide_id": slide_id,
             "slide_path": str(slide_path),
+            "reader": reader.backend,
+            "bif_overlaps_ignored": int(getattr(reader._slide, "overlaps_ignored", 0)),
             "encoder": spec.name,
             "embedding_dim": spec.embed_dim,
             "model_input_size": spec.model_input_size,

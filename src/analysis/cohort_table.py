@@ -12,7 +12,7 @@ Describes exactly the patients analysed: slides in a run's splits.csv (the same
 Columns: Overall | EBV+ | EBV- | p. Continuous: median [IQR], Mann-Whitney U.
 Categorical: n (%) within column, Fisher exact for 2x2 else chi-square; missing
 values are shown but excluded from percentages' denominators and from tests.
-Writes cohort_table_{tcga,chile}.csv / .md / .png.
+Writes cohort_table_{tcga,chile}.csv / .png.
 """
 
 from __future__ import annotations
@@ -147,15 +147,6 @@ def build_table(pts: pd.DataFrame, orders: dict[str, list[str]],
     return pd.DataFrame(rows, columns=["Characteristic", "Overall", "EBV+", "EBV−", "p"])
 
 
-def markdown(table: pd.DataFrame) -> str:
-    """Pipe table without the tabulate dependency; indents shown as non-breaking spaces."""
-    cells = table.replace({"^   ": "\u00a0\u00a0\u00a0"}, regex=True)
-    lines = ["| " + " | ".join(cells.columns) + " |",
-             "|" + "|".join([":---"] + ["---:"] * (len(cells.columns) - 1)) + "|"]
-    lines += ["| " + " | ".join(map(str, r)) + " |" for r in cells.itertuples(index=False)]
-    return "\n".join(lines) + "\n"
-
-
 def render_png(table: pd.DataFrame, out: Path) -> None:
     """Plain typeset table: hairline rules, bold section rows, right-aligned numbers."""
     n = len(table)
@@ -208,11 +199,10 @@ def main() -> int:
     for name, (pts, orders, skip) in cohorts.items():
         table = build_table(pts, orders, skip)
         stem = args.out_dir / f"cohort_table_{name}"
-        table.to_csv(stem.with_suffix(".csv"), index=False)
-        stem.with_suffix(".md").write_text(markdown(table))
+        table.to_csv(stem.with_suffix(".csv"), index=False, encoding="utf-8-sig")  # BOM: Excel-safe
         render_png(table, stem.with_suffix(".png"))
         print(f"\n== {name.upper()} ==\n{table.to_string(index=False)}")
-    print(f"\nwrote cohort_table_{{tcga,chile}}.csv/.md/.png to {args.out_dir}")
+    print(f"\nwrote cohort_table_{{tcga,chile}}.csv/.png to {args.out_dir}")
     return 0
 
 

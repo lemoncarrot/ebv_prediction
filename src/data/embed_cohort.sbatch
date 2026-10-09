@@ -14,20 +14,29 @@
 # Resumable: slides whose .h5 exists are skipped.
 #
 #   sbatch embed_cohort.sbatch <slides-dir> <embeddings-out-dir>
-#   sbatch embed_cohort.sbatch $P/data/robertoherrera_svs $P/data/robertoherrera_embeddings
+#   sbatch embed_cohort.sbatch $P/data/robertoherrera $P/data/robertoherrera_embeddings \
+#       --sat-thresh 20 --min-tissue-area 2e5 --max-dark-value 60   # .bif read directly; settings from tune_segmentation.py
+#   (a single slide file also works as <slides-dir>, e.g. for a test)
 #
 # Run setup_encoder.sbatch once first (installs `uni`, checks embeddings match).
 
 set -euo pipefail
 SLIDES=${1:?usage: sbatch embed_cohort.sbatch <slides-dir> <out-dir>}
 OUT=${2:?usage: sbatch embed_cohort.sbatch <slides-dir> <out-dir>}
+shift 2   # anything after <out-dir> is passed to run_pipeline.py (e.g. segmentation flags)
 PROJECT=/scratch/users/kchen24/EBV_prediction
 source "$HOME/miniforge3/etc/profile.d/conda.sh"
 conda activate "$GROUP_HOME/Virtual_envs/uni2h"
 python -c "import uni" || { echo "ERROR: uni not installed; run setup_encoder.sbatch" >&2; exit 1; }
 
+# Ventana .bif that OpenSlide cannot open is read by src/bif_reader.py, which
+# needs tifffile; kept in a side folder so the uni2h env itself is unchanged.
+EXTRA=$GROUP_HOME/software/py310-tifffile
+[ -d "$EXTRA/tifffile" ] || pip install --no-deps --target "$EXTRA" tifffile
+export PYTHONPATH=$EXTRA${PYTHONPATH:+:$PYTHONPATH}
+
 cd "$PROJECT/src"
-python -u run_pipeline.py --slides "$SLIDES" --out-dir "$OUT" --workers 6
+python -u run_pipeline.py --slides "$SLIDES" --out-dir "$OUT" --workers 6 "$@"
 
 # magnification actually seen by the pipeline, per slide
 python - "$OUT" <<'PY'

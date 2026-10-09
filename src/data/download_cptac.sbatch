@@ -22,10 +22,15 @@ set -euo pipefail
 
 PROJECT=/scratch/users/kchen24/EBV_prediction
 DEST=$PROJECT/data/original_cptac
-LINK='https://faspex.cancerimagingarchive.net/aspera/faspex/public/package?context=eyJyZXNvdXJjZSI6InBhY2thZ2VzIiwidHlwZSI6ImV4dGVybmFsX2Rvd25sb2FkX3BhY2thZ2UiLCJpZCI6IjEyNjkiLCJwYXNzY29kZSI6ImUyYmUzMzBiYmM1ZTU0NWI1MTdiMGE2MzM3MGQ5YzBkNjFmZGE5MjAiLCJwYWNrYWdlX2lkIjoiMTI2OSIsImVtYWlsIjoiaGVscEBjYW5jZXJpbWFnaW5nYXJjaGl2ZS5uZXQifQ=='
+LINK='https://faspex.cancerimagingarchive.net/?context=eyJyZXNvdXJjZSI6InBhY2thZ2VzIiwidHlwZSI6ImV4dGVybmFsX2Rvd25sb2FkX3BhY2thZ2UiLCJpZCI6IjEyNjkiLCJwYXNzY29kZSI6ImUyYmUzMzBiYmM1ZTU0NWI1MTdiMGE2MzM3MGQ5YzBkNjFmZGE5MjAiLCJwYWNrYWdlX2lkIjoiMTI2OSIsImVtYWlsIjoiaGVscEBjYW5jZXJpbWFnaW5nYXJjaGl2ZS5uZXQifQ=='   # as published on the TCIA page
 
 mkdir -p "$DEST"
-module load system aspera-cli/4.24.1
+# ascli >= 4.27.4 (public-link receive fixed), installed with: gem install --install-dir $GROUP_HOME/software/ascli aspera-cli
+# ascp transfer engine from the Sherlock module, linked once as ~/.aspera/sdk/ascp
+module load system aspera-cli/4.24.1 devel ruby/3.1.2
+export GEM_HOME=$GROUP_HOME/software/ascli GEM_PATH=$GROUP_HOME/software/ascli
+ascli() { "$GEM_HOME/bin/ascli" "$@"; }
+[ -e ~/.aspera/sdk/ascp ] || { mkdir -p ~/.aspera/sdk; ln -s "$(command -v ascp)" ~/.aspera/sdk/ascp; }
 echo "$(date '+%F %T') start on $(hostname): ascli $(ascli --version) -> $DEST"
 echo "already present: $(find "$DEST" -name '*.svs' | wc -l) .svs, $(du -sh "$DEST" | cut -f1)"
 
