@@ -68,7 +68,8 @@ def main() -> int:
     rows["label"] = -1                      # unknown; BagDataset needs the column
     rows["cohort"] = args.cohort
 
-    scored = evaluate(model, BagDataset(rows, feature_norm), device)
+    scored = evaluate(model, BagDataset(rows, feature_norm,
+                                        neighbours=getattr(model, "graph_layers", 0) > 0), device)
     attrs = [read_attrs(Path(f)) for f in rows["feature_path"]]
     out = pd.DataFrame({
         "slide_id": scored["slide_id"],

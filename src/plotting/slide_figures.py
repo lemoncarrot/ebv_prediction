@@ -9,7 +9,8 @@ experiment's test set: precision-recall on the left, confusion matrix at 0.5 on
 the right. No titles or captions -- those belong on the slide. Experiments with
 several seeds draw seed 0 (methods share folds within a seed); every seed's
 numbers go to results_table.csv.
-The summary slide compares only the TCGA -> Chile variants: the mixed
+The summary slide (06) and summary_tcga_to_chile.csv (mean ± SD over seeds)
+compare only the TCGA -> Chile variants: the mixed
 experiment is tested on a different, smaller held-out set, so its numbers are
 not comparable and it stays on its own slide.
 Also writes results_table.csv (one row per run).
@@ -44,12 +45,16 @@ EXPERIMENTS = [
      "pattern": "tcga2chile_3class_s{seed}_*"},
     {"key": "04_tcga_to_chile_3class_additive",
      "pattern": "tcga2chile_3class_additive_s{seed}_*"},
+    {"key": "05_tcga_to_chile_3class_additive_graph",
+     "pattern": "tcga2chile_3class_additive_graph2_s{seed}_*"},
 ]
 # summary rows, top to bottom: the TCGA -> Chile variants in the order presented
 SUMMARY_ARMS = [
     ("binary", "Binary ABMIL (baseline)", "tcga2chile_binary_s{seed}_*"),
     ("3class", "3-class ABMIL", "tcga2chile_3class_s{seed}_*"),
     ("3class_additive", "3-class additive MIL", "tcga2chile_3class_additive_s{seed}_*"),
+    ("3class_additive_graph2", "3-class additive MIL + graph",
+     "tcga2chile_3class_additive_graph2_s{seed}_*"),
 ]
 
 
@@ -136,7 +141,7 @@ def summary_slide(results: Path, out_dir: Path) -> pd.DataFrame:
     labels = [label for arm, label, _ in SUMMARY_ARMS if arm in set(table["arm"])]
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), sharey=True,
-                             gridspec_kw={"left": 0.235, "right": 0.97, "top": 0.88,
+                             gridspec_kw={"left": 0.27, "right": 0.97, "top": 0.88,
                                           "bottom": 0.12, "wspace": 0.12})
     for ax, (metric, name) in zip(axes, [("auprc", "AUPRC"), ("auroc", "AUROC")]):
         values = table[metric]
@@ -159,9 +164,19 @@ def summary_slide(results: Path, out_dir: Path) -> pd.DataFrame:
     fig.legend(*axes[0].get_legend_handles_labels(), loc="upper right", ncol=2, fontsize=12,
                frameon=False, labelcolor=INK, bbox_to_anchor=(0.97, 1.0))
     for suffix in ("png", "pdf"):
-        fig.savefig(out_dir / f"05_summary_tcga_to_chile.{suffix}", dpi=300, facecolor="white")
+        fig.savefig(out_dir / f"06_summary_tcga_to_chile.{suffix}", dpi=300, facecolor="white")
     plt.close(fig)
-    print("wrote 05_summary_tcga_to_chile")
+    print("wrote 06_summary_tcga_to_chile")
+    # one row per model: mean ± SD over seeds (Chile test set)
+    metrics = ["auprc", "auroc", "sens", "spec"]
+    grouped = table.groupby("label", sort=False)
+    stats = grouped[metrics].agg(["mean", "std"])
+    summary = pd.DataFrame({"model": stats.index, "n_seeds": grouped.size().values})
+    for m in metrics:
+        summary[f"{m}_mean_sd"] = [f"{stats.loc[name, (m, 'mean')]:.3f} ± "
+                                   f"{stats.loc[name, (m, 'std')]:.3f}" for name in stats.index]
+    summary.to_csv(out_dir / "summary_tcga_to_chile.csv", index=False, encoding="utf-8-sig")
+    print("wrote summary_tcga_to_chile.csv")
     return table
 
 

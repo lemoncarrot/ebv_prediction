@@ -10,7 +10,7 @@ scored blind.
 | TCGA-STAD | 306 / 284 | 25 slides | molecular subtype (EBV) |
 | Chile (internal) | 130 / 130 | 22 | EBER-ISH |
 | CPTAC-STAD (planned external) | 159 tumours | 13 | molecular subtype (LinkedOmics `GC_metatable.tsi`) |
-| robertoherrera (external, blinded) | 69 slides (VENTANA DP 600 .bif, 20x) | collaborator-held | collaborator-held |
+| External collaborator cohort (blinded) | 69 slides (VENTANA DP 600 .bif, 20x) | collaborator-held | collaborator-held |
 
 ## Pipeline
 
@@ -27,6 +27,8 @@ scored blind.
    - `--aggregation additive` (Additive MIL): the slide logit is the
      attention-weighted sum of per-tile logits, giving exact signed tile
      contributions for heatmaps (`src/qupath/export_heatmaps.py`).
+   - `--graph-layers L`: GraphSAGE-style layers that mix each tile with its 8 grid
+     neighbours before attention (Patch-GCN-like spatial context; 0 = off).
 3. **Evaluate / interpret**: PR curves and confusion matrices (`src/plotting/`),
    MSI-confound and multi-seed comparisons (`src/analysis/`), per-tile attention
    (`attention.h5`) and a blinded QuPath review package (`src/qupath/`).
@@ -54,30 +56,3 @@ src/
   qupath/                    QuPath 0.7: blinded attention review + additive-MIL heatmap export
   metadata_prep/             scripts that built metadata/ (as originally run; old paths)
 ```
-
-## Running (Sherlock)
-
-Everything runs as Slurm jobs; see the header of each `.sbatch` for usage.
-
-```bash
-cd src/prediction
-sbatch train.sbatch tcga2chile                                   # train TCGA, test Chile
-sbatch --export=ALL,TAG=3class_s0 train.sbatch tcga2chile --label-scheme 3class --seed 0
-sbatch --export=ALL,TAG=binary_s0 train.sbatch all --seed 0      # all TCGA+Chile, for new cohorts
-```
-
-New external cohort: see `src/data/README.md` (set up encoder once -> embed ->
-`predict.sbatch` with a model trained by `train.sbatch all`).
-
-## Notes
-
-- Tiling is by MPP, not objective power: tiles always cover 128 µm. All Chile and
-  most TCGA slides are scanned at ~40x (0.25 µm/px) and downsampled.
-- Embeddings must come from the same encoder setup as training;
-  `src/data/check_encoder.py` verifies a new machine reproduces stored embeddings.
-- Ventana DP 200/600 `.bif` files use LEFT tile joints that released OpenSlide
-  cannot open; `bif_reader.py` reads the frame grid directly, ignoring the scanner's
-  24 px joint overlaps (~25% of joints on the DP 600 slides), so results on those
-  slides are preliminary. `convert_bif_to_svs.py` refuses such files.
-- Paths in the `.sbatch` files point at the project on Sherlock
-  (`/scratch/users/kchen24/EBV_prediction`) and the group conda envs.

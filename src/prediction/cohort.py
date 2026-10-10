@@ -298,8 +298,30 @@ def check_no_leak(train: pd.DataFrame, held_out: pd.DataFrame, what: str) -> Non
 # the bags themselves
 # --------------------------------------------------------------------------
 
+def grid_neighbours(coords: np.ndarray, step: float) -> np.ndarray:
+    """(n, 8) indices of each tile's 8 grid neighbours (-1 where absent).
+
+    Tiles lie on a regular lattice of pitch `step` (level-0 px), so neighbours
+    are found by exact lookup of grid positions rather than a radius search.
+    """
+    grid = np.rint(np.asarray(coords, dtype=np.float64) / step).astype(np.int64)
+    span = int(grid[:, 1].max()) + 3 if len(grid) else 1
+    keys = (grid[:, 0] + 1) * span + (grid[:, 1] + 1)          # +1: neighbours of row/col 0 stay >= 0
+    order = np.argsort(keys)
+    sorted_keys = keys[order]
+    out = np.full((len(grid), 8), -1, dtype=np.int64)
+    offsets = [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy]
+    for k, (dx, dy) in enumerate(offsets):
+        target = keys + dx * span + dy
+        pos = np.clip(np.searchsorted(sorted_keys, target), 0, max(len(keys) - 1, 0))
+        hit = sorted_keys[pos] == target
+        out[hit, k] = order[pos[hit]]
+    return out
+
+
 class BagDataset(Dataset):
-    """One slide per item -> (features (n_tiles, embed_dim), label, slide_id).
+    """One slide per item -> (features (n_tiles, embed_dim), label, slide_id)
+    [, neighbours (n_tiles, 8) when built with neighbours=True, for graph layers].
 
     Bags are not padded or batched: ABMIL here consumes one bag at a time, so
     use `DataLoader(..., batch_size=None)`, which yields items unmodified.
@@ -308,7 +330,8 @@ class BagDataset(Dataset):
 
     def __init__(self, frame: pd.DataFrame, feature_norm: str = "none",
                  max_tiles: int | None = None, seed: int = 0,
-                 targets: np.ndarray | None = None, weights: np.ndarray | None = None):
+                 targets: np.ndarray | None = None, weights: np.ndarray | None = None,
+                 neighbours: bool = False):
         """`targets` replaces the binary label as the training target (e.g. the
         (n, 3) mask from class_targets); `labels` stays binary for metrics.
         `weights` is a per-slide loss weight, looked up by slide_id."""
@@ -321,6 +344,7 @@ class BagDataset(Dataset):
         self.weight_by_id = ({} if weights is None
                              else dict(zip(self.slide_ids, np.asarray(weights, dtype=float))))
         self.feature_norm, self.max_tiles, self.seed = feature_norm, max_tiles, seed
+        self.neighbours = neighbours
         self.epoch = 0
         self._handles: dict[int, h5py.File] = {}
 
@@ -336,18 +360,23 @@ class BagDataset(Dataset):
             self._handles[i] = h5py.File(self.paths[i], "r")
         return self._handles[i]
 
-    def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor, str]:
-        dset = self._handle(i)["features"]
+    def __getitem__(self, i: int) -> tuple:
+        handle = self._handle(i)
+        dset = handle["features"]
         n = dset.shape[0]
+        keep = slice(None)
         if self.max_tiles is not None and n > self.max_tiles:
             rng = np.random.default_rng((self.seed, self.epoch, i))
-            features = dset[np.sort(rng.choice(n, self.max_tiles, replace=False))]
-        else:
-            features = dset[:]
+            keep = np.sort(rng.choice(n, self.max_tiles, replace=False))
+        features = dset[keep]
         features = torch.from_numpy(np.ascontiguousarray(features, dtype=np.float32))
         if self.feature_norm == "l2":
             features = torch.nn.functional.normalize(features, dim=1)
-        return features, torch.tensor(self.targets[i]), self.slide_ids[i]
+        item = (features, torch.tensor(self.targets[i]), self.slide_ids[i])
+        if self.neighbours:                  # on the kept tiles, after any subsampling
+            nb = grid_neighbours(handle["coords"][keep], float(handle.attrs["patch_size_level0"]))
+            item += (torch.from_numpy(nb),)
+        return item
 
     def __del__(self) -> None:
         for handle in self._handles.values():
