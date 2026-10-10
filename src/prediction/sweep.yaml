@@ -1,0 +1,41 @@
+# Weights & Biases sweep over the knobs worth comparing first.
+#
+#   wandb sweep sweep.yaml          # prints a SWEEP_ID
+#   wandb agent <SWEEP_ID>          # one per GPU; run several in parallel
+#
+# Grid, not bayes: 2 x 2 x 3 = 12 runs is small enough to enumerate, and a
+# search decided in advance is what keeps the selection honest with this many
+# positives. Edit the fixed `value:` entries below to point at your data.
+program: train.py
+method: grid
+metric:
+  name: oof_auc
+  goal: maximize
+
+parameters:
+  feature_norm:
+    values: ["none", "l2"]
+  hidden_dim:
+    values: [256, 512]
+  lr:
+    values: [0.00005, 0.0001, 0.0003]
+
+  # fixed across the sweep so the 12 results stay comparable
+  embeddings_dir:
+    value: "../../02_new_embeddings ../../02_tcga_embeddings"
+  labels:
+    value: "../../metadata/cohort_labels.csv"
+  out_dir:
+    value: "../../04_new_mil/sweep"
+  external_cohort:
+    value: "chile"
+  folds:
+    value: 5
+  seed:
+    value: 0
+  epochs:
+    value: 40
+  wandb:
+    value: true
+  wandb_project:
+    value: ebv-mil
