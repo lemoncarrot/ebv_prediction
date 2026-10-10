@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Cohort descriptor tables ("Table 1" style), one per cohort, split by EBV status.
+"""Cohort descriptor tables, one per cohort: characteristic | value.
 
     python cohort_table.py --out-dir ../../results/lab_meeting_2026-10
 
-Describes exactly the patients analysed: slides in a run's splits.csv (the same
-436 usable slides in every TCGA/Chile run), collapsed to one row per patient.
-  TCGA:  STAD_merged_table.csv (age, gender, molecular subtype, MSI, histological
-         type, pathologic stage); EBV status = molecular subtype STAD_EBV.
-  Chile: Chile set_Training_n_132.xlsx (age at diagnosis, sex, Lauren type, grade,
-         pTNM); EBV status = EBER-ISH. Joined on idscanner == sample_id.
-Columns: Overall | EBV+ | EBV- | p. Continuous: median [IQR], Mann-Whitney U.
-Categorical: n (%) within column, Fisher exact for 2x2 else chi-square; missing
-values are shown but excluded from percentages' denominators and from tests.
+Describes exactly the slides analysed (a run's splits.csv: the same 436 usable
+slides in every TCGA/Chile run). Counted per slide: each slide takes its
+patient's clinical values, so every category sums to the slide count.
+  TCGA:  STAD_merged_table.csv (age, gender, molecular subtype, histological type
+         -> Lauren type, pathologic stage).
+  Chile: Chile set_Training_n_132.xlsx (age at diagnosis, sex, Lauren type, pTNM);
+         no molecular subtyping, so EBV status by EBER-ISH stands in its place.
+Rows: Slides; Age, median (range); then n (%) per category for sex, molecular
+subtype / EBV status, Lauren type and pathologic stage (I/II vs III/IV, the
+grouping TCGA records). Missing values get their own row and are excluded from
+percentage denominators.
 Writes cohort_table_{tcga,chile}.csv / .png.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -26,13 +27,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2_contingency, fisher_exact, mannwhitneyu
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from xlsx import read_xlsx  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parent.parent.parent
-INK, SECONDARY, RULE = "#0b0b0b", "#52514e", "#c3c2b7"
+INK, RULE = "#0b0b0b", "#c3c2b7"
 
 TCGA_SUBTYPE = {"STAD_CIN": "CIN", "STAD_GS": "GS", "STAD_MSI": "MSI", "STAD_EBV": "EBV",
                 "STAD_POLE": "POLE"}
@@ -76,7 +76,7 @@ def tcga_patients(labels: pd.DataFrame, splits_csv: Path) -> pd.DataFrame:
         "Sex": pts["Gender"].map({"M": "Male", "F": "Female"}),
         "Molecular subtype": pts["Subtype"].map(TCGA_SUBTYPE),
         "MSI status": pts["MSI"].map({"MSI": "MSI-high", "MSS": "MSS"}),
-        "Lauren type (from histological type)": pts["histological_type"].map(tcga_lauren),
+        "Lauren type": pts["histological_type"].map(tcga_lauren),   # derived from histological type
         "Pathologic stage": pts["P_stage"],
     })
 
@@ -106,64 +106,46 @@ def pct(n: int, d: int) -> str:
     return f"{n} ({100 * n / d:.0f}%)" if d else "0"
 
 
-def p_format(p: float) -> str:
-    return "" if p is None or np.isnan(p) else ("<0.001" if p < 0.001 else f"{p:.3f}")
+def per_slide(patients: pd.DataFrame) -> pd.DataFrame:
+    """One row per analysed slide, carrying its patient's values."""
+    return patients.loc[patients.index.repeat(patients["n_slides"])].reset_index(drop=True)
 
 
-def build_table(pts: pd.DataFrame, orders: dict[str, list[str]],
-                skip_test: set[str]) -> pd.DataFrame:
-    groups = {"Overall": pts, "EBV+": pts[pts["ebv"] == 1], "EBV−": pts[pts["ebv"] == 0]}
-    rows = [{"Characteristic": "Patients, n", **{k: str(len(g)) for k, g in groups.items()},
-             "p": ""},
-            {"Characteristic": "Slides, n", **{k: str(int(g["n_slides"].sum()))
-                                                for k, g in groups.items()}, "p": ""}]
-    age = "Age (years)"
-    p = mannwhitneyu(groups["EBV+"][age].dropna(), groups["EBV−"][age].dropna()).pvalue
-    rows.append({"Characteristic": f"{age}, median [IQR]", "p": p_format(p),
-                 **{k: f"{g[age].median():.0f} [{g[age].quantile(.25):.0f}–"
-                       f"{g[age].quantile(.75):.0f}]" for k, g in groups.items()}})
-    if pts[age].isna().any():
-        rows.append({"Characteristic": "   Missing", "p": "",
-                     **{k: str(int(g[age].isna().sum())) for k, g in groups.items()}})
-
+def build_table(slides: pd.DataFrame, orders: dict[str, list[str]]) -> pd.DataFrame:
+    rows = [("Slides, n", str(len(slides)))]
+    age = slides["Age (years)"]
+    rows.append(("Age (years), median (range)",
+                 f"{age.median():.0f} ({age.min():.0f}–{age.max():.0f})"))
+    if age.isna().any():
+        rows.append(("   Missing", str(int(age.isna().sum()))))
     for var, levels in orders.items():
-        known = pts[pts[var].notna()]
-        table = pd.crosstab(known[var], known["ebv"]).reindex(levels).fillna(0)
-        table = table.loc[table.sum(axis=1) > 0]
-        p = np.nan
-        if var not in skip_test and table.shape[0] > 1 and table.shape[1] == 2:
-            p = (fisher_exact(table.values)[1] if table.shape == (2, 2)
-                 else chi2_contingency(table.values)[1])
-        rows.append({"Characteristic": var, "Overall": "", "EBV+": "", "EBV−": "",
-                     "p": p_format(p)})
-        for level in table.index:
-            rows.append({"Characteristic": f"   {level}", "p": "",
-                         **{k: pct(int((g[var] == level).sum()), int(g[var].notna().sum()))
-                            for k, g in groups.items()}})
-        missing = {k: int(g[var].isna().sum()) for k, g in groups.items()}
-        if missing["Overall"]:
-            rows.append({"Characteristic": "   Missing", "p": "",
-                         **{k: str(v) for k, v in missing.items()}})
-    return pd.DataFrame(rows, columns=["Characteristic", "Overall", "EBV+", "EBV−", "p"])
+        known = slides[var].dropna()
+        rows.append((var, ""))
+        for level in levels:
+            if (known == level).any():
+                rows.append((f"   {level}", pct(int((known == level).sum()), len(known))))
+        if slides[var].isna().any():
+            rows.append(("   Missing", str(int(slides[var].isna().sum()))))
+    return pd.DataFrame(rows, columns=["Characteristic", "Value"])
 
 
 def render_png(table: pd.DataFrame, out: Path) -> None:
-    """Plain typeset table: hairline rules, bold section rows, right-aligned numbers."""
+    """Plain typeset table: hairline rules, bold section rows, right-aligned values."""
     n = len(table)
-    fig, ax = plt.subplots(figsize=(10, 0.32 * (n + 1) + 0.3))
+    fig, ax = plt.subplots(figsize=(6, 0.32 * (n + 1) + 0.3))
     ax.axis("off")
     ax.set_xlim(0, 1)
     ax.set_ylim(n + 0.6, -0.8)
-    xs = {"Characteristic": 0.0, "Overall": 0.62, "EBV+": 0.76, "EBV−": 0.90, "p": 1.0}
+    xs = {"Characteristic": 0.0, "Value": 1.0}
     for col, x in xs.items():
         ax.text(x, -0.3, col, ha="left" if col == "Characteristic" else "right",
                 va="center", fontsize=12, weight="bold", color=INK)
     ax.axhline(0.15, color=INK, linewidth=1)
     for i, row in table.iterrows():
-        section = not row["Characteristic"].startswith(" ") and row["Overall"] == ""
+        section = not row["Characteristic"].startswith(" ") and row["Value"] == ""
         for col, x in xs.items():
             ax.text(x, i + 0.6, row[col], ha="left" if col == "Characteristic" else "right",
-                    va="center", fontsize=11, color=INK if col != "p" else SECONDARY,
+                    va="center", fontsize=11, color=INK,
                     weight="bold" if section and col == "Characteristic" else "normal")
     ax.axhline(n + 0.6 - 0.05, color=RULE, linewidth=1)
     fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
@@ -180,24 +162,24 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     labels = pd.read_csv(PROJECT / "metadata/cohort_labels.csv")
 
+    chile = chile_patients(labels, args.splits)
+    chile["EBV status (EBER-ISH)"] = chile["ebv"].map({1: "EBV+", 0: "EBV−"})
     cohorts = {
         "tcga": (tcga_patients(labels, args.splits), {
             "Sex": ["Male", "Female"],
             "Molecular subtype": ["EBV", "MSI", "CIN", "GS", "POLE"],
-            "MSI status": ["MSI-high", "MSS"],
-            "Lauren type (from histological type)": ["Intestinal", "Diffuse",
-                                                     "Adenocarcinoma NOS"],
+            "Lauren type": ["Intestinal", "Diffuse", "Adenocarcinoma NOS"],
             "Pathologic stage": ["I/II", "III/IV"],
-        }, {"Molecular subtype", "MSI status"}),   # EBV status is defined by subtype
-        "chile": (chile_patients(labels, args.splits), {
+        }),
+        "chile": (chile, {
             "Sex": ["Male", "Female"],
+            "EBV status (EBER-ISH)": ["EBV+", "EBV−"],
             "Lauren type": ["Intestinal", "Diffuse", "Mixed", "Undetermined"],
-            "Histologic grade": ["G1", "G2", "G3"],
             "Pathologic stage": ["I/II", "III/IV"],
-        }, set()),
+        }),
     }
-    for name, (pts, orders, skip) in cohorts.items():
-        table = build_table(pts, orders, skip)
+    for name, (patients, orders) in cohorts.items():
+        table = build_table(per_slide(patients), orders)
         stem = args.out_dir / f"cohort_table_{name}"
         table.to_csv(stem.with_suffix(".csv"), index=False, encoding="utf-8-sig")  # BOM: Excel-safe
         render_png(table, stem.with_suffix(".png"))

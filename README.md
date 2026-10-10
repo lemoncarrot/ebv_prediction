@@ -27,6 +27,8 @@ scored blind.
    - `--aggregation additive` (Additive MIL): the slide logit is the
      attention-weighted sum of per-tile logits, giving exact signed tile
      contributions for heatmaps (`src/qupath/export_heatmaps.py`).
+   - `--graph-layers L`: GraphSAGE-style layers that mix each tile with its 8 grid
+     neighbours before attention (Patch-GCN-like spatial context; 0 = off).
 3. **Evaluate / interpret**: PR curves and confusion matrices (`src/plotting/`),
    MSI-confound and multi-seed comparisons (`src/analysis/`), per-tile attention
    (`attention.h5`) and a blinded QuPath review package (`src/qupath/`).

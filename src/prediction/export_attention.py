@@ -44,15 +44,16 @@ def write_attention(model: ABMIL, rows: pd.DataFrame, out_path: Path, device: st
     """Score every slide in `rows` (needs slide_id, label, cohort, feature_path)
     and write attention.h5. Overwrites groups for slides already present."""
     model.to(device).eval()
-    dataset = BagDataset(rows, feature_norm)
+    dataset = BagDataset(rows, feature_norm, neighbours=getattr(model, "graph_layers", 0) > 0)
     splits = rows["split"] if "split" in rows else pd.Series("", index=rows.index)
     with h5py.File(out_path, "a") as out:
         for i in range(len(dataset)):
-            features, label, slide_id = dataset[i]
+            features, label, slide_id, *nb = dataset[i]
             x = features.to(device)
-            logits, attention = model(x)                     # either aggregation mode
+            nb = nb[0].to(device) if nb else None            # graph models: neighbour index
+            logits, attention = model(x, nb)                 # either aggregation mode
             prob = torch.sigmoid(logodds(logits, EBV_INDEX)).item()
-            _, h = model.attend(x)
+            _, h = model.attend(x, nb)
             tile_logits = model.head(h)                      # (n, n_classes)
             tile_logit = logodds(tile_logits, EBV_INDEX)     # EBV vs rest, any head
 

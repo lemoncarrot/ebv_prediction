@@ -70,6 +70,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--aggregation", choices=("attention", "additive"), default="attention",
                    help="attention: classify the attention-pooled bag (ABMIL). additive: "
                         "attention-weighted sum of per-tile logits (Additive MIL).")
+    p.add_argument("--graph-layers", type=int, default=0,
+                   help="Graph layers mixing each tile with its 8 grid neighbours before "
+                        "attention (0 = none; each layer widens the context by one tile).")
     p.add_argument("--feature-norm", choices=("none", "l2"), default="none")
     p.add_argument("--max-tiles", type=int, default=None,
                    help="Subsample bags larger than this each epoch.")
@@ -126,8 +129,8 @@ def evaluate(model: ABMIL, dataset: BagDataset, device: str) -> pd.DataFrame:
     multi-class model adds p_<class> for every class."""
     model.eval()
     rows = []
-    for i, (features, _, slide_id) in enumerate(loader(dataset, shuffle=False, workers=0)):
-        logits, _ = model(features.to(device))
+    for i, (features, _, slide_id, *nb) in enumerate(loader(dataset, shuffle=False, workers=0)):
+        logits, _ = model(features.to(device), nb[0].to(device) if nb else None)
         row = {"slide_id": slide_id, "label": int(dataset.labels[i]),
                "prob": float(torch.sigmoid(logodds(logits, EBV_INDEX)).item())}
         if logits.numel() > 1:
@@ -180,8 +183,8 @@ def fit(model: ABMIL, train_set: BagDataset, val_set: BagDataset | None, args,
         total, seen = 0.0, 0
 
         batches = loader(train_set, True, args.workers)
-        for step, (features, target, slide_id) in enumerate(batches, 1):
-            logits, _ = model(features.to(device))
+        for step, (features, target, slide_id, *nb) in enumerate(batches, 1):
+            logits, _ = model(features.to(device), nb[0].to(device) if nb else None)
             loss = slide_loss(logits, target.to(device), pos_weight)
             loss = loss * train_set.weight_by_id.get(slide_id, 1.0)
             (loss / args.accumulate).backward()
@@ -224,14 +227,15 @@ def bags(rows: pd.DataFrame, args, max_tiles: int | None) -> BagDataset:
     weights = None
     if args.msi_weight != 1.0:
         weights = np.where(is_msi(rows), args.msi_weight, 1.0)
-    return BagDataset(rows, args.feature_norm, max_tiles, args.seed, targets, weights)
+    return BagDataset(rows, args.feature_norm, max_tiles, args.seed, targets, weights,
+                      neighbours=args.graph_layers > 0)
 
 
 def new_model(embed_dim: int, args) -> ABMIL:
     return ABMIL(input_dim=embed_dim, hidden_dim=args.hidden_dim, attn_dim=args.attn_dim,
                  head_hidden=args.head_hidden, dropout=args.dropout,
                  n_classes=len(CLASSES) if args.label_scheme == "3class" else 1,
-                 aggregation=args.aggregation)
+                 aggregation=args.aggregation, graph_layers=args.graph_layers)
 
 
 def score(model: ABMIL, rows: pd.DataFrame, args) -> pd.DataFrame:
